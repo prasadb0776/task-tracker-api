@@ -1,0 +1,6 @@
+import os
+
+DATABASE_PATH = os.getenv("DATABASE_PATH", "tasks.db")
+
+DEFAULT_PAGE_SIZE = 20
+MAX_PAGE_SIZE = 100
