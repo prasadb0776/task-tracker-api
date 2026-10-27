@@ -61,3 +61,33 @@ def test_create_task_rejects_server_managed_fields(client):
     )
 
     assert response.status_code == 422
+
+
+def test_create_task_rejects_missing_title(client):
+    response = client.post(
+        "/tasks",
+        json={"description": "A task without a title"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_create_task_rejects_whitespace_only_title(client):
+    response = client.post(
+        "/tasks",
+        json={"title": "   "},
+    )
+
+    assert response.status_code == 422
+
+
+def test_create_task_rejects_invalid_due_date(client):
+    response = client.post(
+        "/tasks",
+        json={
+            "title": "Invalid date task",
+            "due_date": "not-a-date",
+        },
+    )
+
+    assert response.status_code == 422

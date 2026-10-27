@@ -74,3 +74,27 @@ def test_list_tasks_rejects_invalid_priority(client):
     response = client.get("/tasks?priority=urgent")
 
     assert response.status_code == 422
+
+
+def test_list_tasks_rejects_zero_limit(client):
+    response = client.get("/tasks?limit=0")
+
+    assert response.status_code == 422
+
+
+def test_list_tasks_rejects_negative_offset(client):
+    response = client.get("/tasks?offset=-1")
+
+    assert response.status_code == 422
+
+
+def test_list_tasks_rejects_invalid_sort_by(client):
+    response = client.get("/tasks?sort_by=invalid_column")
+
+    assert response.status_code == 422
+
+
+def test_list_tasks_rejects_invalid_order(client):
+    response = client.get("/tasks?order=sideways")
+
+    assert response.status_code == 422

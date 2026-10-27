@@ -125,3 +125,12 @@ def test_put_resets_omitted_fields_to_defaults(client):
     assert data["description"] is None
     assert data["status"] == "todo"
     assert data["priority"] == "medium"
+
+
+def test_patch_task_with_invalid_id_returns_422(client):
+    response = client.patch(
+        "/tasks/abc",
+        json={"title": "Updated title"},
+    )
+
+    assert response.status_code == 422
