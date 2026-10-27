@@ -1,5 +1,6 @@
-
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from app.config import DATABASE_PATH
 
@@ -20,6 +21,7 @@ def get_connection(db_path=None) -> sqlite3.Connection:
     connection.execute("PRAGMA foreign_keys = ON")
     return connection
 
+
 # def get_connection(db_path=None) -> sqlite3.Connection:
 #     path = db_path if db_path is not None else DATABASE_PATH
 
@@ -28,9 +30,20 @@ def get_connection(db_path=None) -> sqlite3.Connection:
 #     connection.execute("PRAGMA foreign_keys = ON")
 #     return connection
 
+@contextmanager
+def database_connection(db_path=None) -> Iterator[sqlite3.Connection]:
+    """Provide a SQLite connection and always close it."""
+    connection = get_connection(db_path)
+
+    try:
+        with connection:
+            yield connection
+    finally:
+        connection.close()
+
 def init_db(db_path=None) -> None:
     """Create the tasks table and indexes if they don't exist."""
-    with get_connection(db_path) as connection:
+    with database_connection(db_path) as connection:
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS tasks (

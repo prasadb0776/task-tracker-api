@@ -1,6 +1,6 @@
 
 from datetime import datetime, timezone,date
-from app.database import get_connection
+from app.database import database_connection
 from app.schemas import TaskCreate
 
 
@@ -12,7 +12,7 @@ def create_task(task: TaskCreate) -> dict:
     """Insert a task into SQLite and return the created row."""
     now = utc_now()
 
-    with get_connection() as connection:
+    with database_connection() as connection:
         cursor = connection.execute(
             """
             INSERT INTO tasks (
@@ -49,7 +49,7 @@ def create_task(task: TaskCreate) -> dict:
 
 def get_task_by_id(task_id: int) -> dict | None:
     """Return a task by ID, or None if it does not exist."""
-    with get_connection() as connection:
+    with database_connection() as connection:
         row = connection.execute(
             "SELECT * FROM tasks WHERE id = ?",
             (task_id,),
@@ -119,7 +119,7 @@ def list_tasks(
     sort_column = allowed_sort_columns[sort_by]
     sort_order = order.upper()
 
-    with get_connection() as connection:
+    with database_connection() as connection:
         total = connection.execute(
             f"SELECT COUNT(*) FROM tasks {where_clause}",
             params,
@@ -170,7 +170,7 @@ def update_task(task_id: int, updates: dict) -> dict | None:
     assignments = ", ".join(f"{field} = ?" for field in fields)
     values = [updates[field] for field in fields]
 
-    with get_connection() as connection:
+    with database_connection() as connection:
         cursor = connection.execute(
             f"UPDATE tasks SET {assignments} WHERE id = ?",
             (*values, task_id),
@@ -189,7 +189,7 @@ def update_task(task_id: int, updates: dict) -> dict | None:
 
 def delete_task(task_id: int) -> bool:
     """Delete a task; return True if a task was deleted."""
-    with get_connection() as connection:
+    with database_connection() as connection:
         cursor = connection.execute(
             "DELETE FROM tasks WHERE id = ?",
             (task_id,),
@@ -202,7 +202,7 @@ def get_task_stats() -> dict[str, int]:
     """Return task counts by status and the number of overdue tasks."""
     today = date.today().isoformat()
 
-    with get_connection() as connection:
+    with database_connection() as connection:
         row = connection.execute(
             """SELECT
                 COUNT(*) AS total,
