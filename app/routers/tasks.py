@@ -1,9 +1,6 @@
-
 from datetime import date
 
 from fastapi import APIRouter, HTTPException, Query, status
-
-from app.exceptions import InvalidTaskError, TaskNotFoundError
 from app.schemas import (
     TaskCreate,
     TaskListResponse,
@@ -20,10 +17,7 @@ router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
 @router.post("", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
 def create_task(task: TaskCreate):
-    try:
-        return service.create_task(task)
-    except InvalidTaskError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return service.create_task(task)
 
 
 @router.get("/stats", response_model=TaskStatsResponse)
@@ -69,39 +63,23 @@ def list_tasks(
 
 @router.get("/{task_id}", response_model=TaskResponse)
 def get_task(task_id: int):
-    try:
-        return service.get_task(task_id)
-    except TaskNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return service.get_task(task_id)
 
 
 @router.put("/{task_id}", response_model=TaskResponse)
 def replace_task(task_id: int, task: TaskCreate):
-    try:
-        service.get_task(task_id)
-        return service.update_task(
-            task_id,
-            TaskUpdate(**task.model_dump()),
-        )
-    except TaskNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except InvalidTaskError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    service.get_task(task_id)
+    return service.update_task(
+        task_id,
+        TaskUpdate(**task.model_dump()),
+    )
 
 
 @router.patch("/{task_id}", response_model=TaskResponse)
 def patch_task(task_id: int, updates: TaskUpdate):
-    try:
-        return service.update_task(task_id, updates)
-    except TaskNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except InvalidTaskError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return service.update_task(task_id, updates)
 
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_task(task_id: int):
-    try:
-        service.delete_task(task_id)
-    except TaskNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    service.delete_task(task_id)
