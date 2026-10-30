@@ -1,11 +1,11 @@
 import logging
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse,FileResponse
 from contextlib import asynccontextmanager
-
 from app.database import init_db
 from app.exceptions import InvalidTaskError, TaskNotFoundError
 from app.routers.tasks import router as tasks_router
+from pathlib import Path
 
 
 logging.basicConfig(level=logging.INFO)
@@ -70,3 +70,10 @@ app.include_router(tasks_router)
 @app.get("/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
+
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+
+@app.get("/", include_in_schema=False)
+def index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
