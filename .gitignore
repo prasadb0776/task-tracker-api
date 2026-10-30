@@ -1,29 +1,5 @@
-
-# Python
 __pycache__/
-*.py[cod]
-*.egg-info/
-
-# Virtual environments
-ttenv/
-.venv/
-venv/
-
-# Tests and coverage
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Local database
-tasks.db
-*.db-journal
-
-# Secrets and environment configuration
+*.db
 .env
-etc/
-
-# Editors and operating system
-.vscode/
-.idea/
-.DS_Store
-
+ttenv/
+.pytest_cache/

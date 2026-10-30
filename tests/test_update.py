@@ -134,3 +134,18 @@ def test_patch_task_with_invalid_id_returns_422(client):
     )
 
     assert response.status_code == 422
+
+
+def test_patch_null_title_is_rejected(client):
+    created = client.post("/tasks", json={"title": "Keep me"}).json()
+    response = client.patch(f"/tasks/{created['id']}", json={"title": None})
+    assert response.status_code == 422
+
+
+def test_patch_updates_updated_at_but_not_created_at(client):
+    created = client.post("/tasks", json={"title": "Timestamps"}).json()
+    updated = client.patch(
+        f"/tasks/{created['id']}", json={"title": "Timestamps v2"}
+    ).json()
+    assert updated["updated_at"] > created["updated_at"]
+    assert updated["created_at"] == created["created_at"]

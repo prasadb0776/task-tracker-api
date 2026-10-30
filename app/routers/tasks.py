@@ -1,5 +1,3 @@
-from datetime import date
-
 from fastapi import APIRouter, HTTPException, Query, status
 from app.schemas import (
     TaskCreate,
@@ -11,14 +9,21 @@ from app.schemas import (
     TaskUpdate,
 )
 from app import service
-
+import logging
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
-
+from datetime import date
 @router.post("", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
 def create_task(task: TaskCreate):
-    return service.create_task(task)
+    created_task = service.create_task(task)
 
+    logger.info(
+        "Task created successfully: task_id=%s",
+        created_task["id"],
+    )
+
+    return created_task
 
 @router.get("/stats", response_model=TaskStatsResponse)
 def get_task_stats():
@@ -68,7 +73,7 @@ def get_task(task_id: int):
 
 @router.put("/{task_id}", response_model=TaskResponse)
 def replace_task(task_id: int, task: TaskCreate):
-    service.get_task(task_id)
+
     return service.update_task(
         task_id,
         TaskUpdate(**task.model_dump()),

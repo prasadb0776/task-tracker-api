@@ -1,0 +1,705 @@
+
+
+========== config.py ==========
+
+import os
+
+DATABASE_PATH = os.getenv("DATABASE_PATH", "tasks.db")
+
+DEFAULT_PAGE_SIZE = 20
+MAX_PAGE_SIZE = 100
+
+========== database.py ==========
+
+import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
+
+from app.config import DATABASE_PATH
+
+_TEST_DATABASE_PATH = None
+
+
+def get_connection(db_path=None) -> sqlite3.Connection:
+    path = (
+        db_path
+        if db_path is not None
+        else _TEST_DATABASE_PATH
+        if _TEST_DATABASE_PATH is not None
+        else DATABASE_PATH
+    )
+
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    return connection
+
+
+# def get_connection(db_path=None) -> sqlite3.Connection:
+#     path = db_path if db_path is not None else DATABASE_PATH
+
+#     connection = sqlite3.connect(path)
+#     connection.row_factory = sqlite3.Row
+#     connection.execute("PRAGMA foreign_keys = ON")
+#     return connection
+
+@contextmanager
+def database_connection(db_path=None) -> Iterator[sqlite3.Connection]:
+    """Provide a SQLite connection and always close it."""
+    connection = get_connection(db_path)
+
+    try:
+        with connection:
+            yield connection
+    finally:
+        connection.close()
+
+def init_db(db_path=None) -> None:
+    """Create the tasks table and indexes if they don't exist."""
+    with database_connection(db_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL
+                    CHECK (length(trim(title)) BETWEEN 1 AND 100),
+                description TEXT
+                    CHECK (
+                        description IS NULL
+                        OR length(description) <= 1000
+                    ),
+                status TEXT NOT NULL DEFAULT 'todo'
+                    CHECK (
+                        status IN ('todo', 'in_progress', 'done')
+                    ),
+                priority TEXT NOT NULL DEFAULT 'medium'
+                    CHECK (
+                        priority IN ('low', 'medium', 'high')
+                    ),
+                due_date TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT
+            )
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_tasks_status
+            ON tasks(status)
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_tasks_priority
+            ON tasks(priority)
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_tasks_due_date
+            ON tasks(due_date)
+            """
+        )
+
+
+========== exceptions.py ==========
+
+
+class TaskNotFoundError(Exception):
+    """Raised when a requested task does not exist."""
+
+
+class InvalidTaskError(Exception):
+    """Raised when a task operation violates business rules."""
+
+
+========== __init__.py ==========
+
+
+
+========== main.py ==========
+
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+
+from app.exceptions import InvalidTaskError, TaskNotFoundError
+from app.routers.tasks import router as tasks_router
+import logging
+app = FastAPI(
+    title="Task Tracker API",
+    description="A REST API to create, manage, and track tasks.",
+    version="0.1.0",
+)
+
+logger = logging.getLogger(__name__)
+
+
+@app.exception_handler(Exception)
+async def unexpected_exception_handler(
+    request: Request,
+    exc: Exception,
+) -> JSONResponse:
+    logger.exception(
+        "Unexpected error while handling %s %s",
+        request.method,
+        request.url.path,
+    )
+
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
+
+
+@app.exception_handler(TaskNotFoundError)
+async def task_not_found_handler(
+    request: Request,
+    exc: TaskNotFoundError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=404,
+        content={"detail": str(exc)},
+    )
+
+
+@app.exception_handler(InvalidTaskError)
+async def invalid_task_handler(
+    request: Request,
+    exc: InvalidTaskError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=422,
+        content={"detail": str(exc)},
+    )
+
+
+app.include_router(tasks_router)
+
+
+@app.get("/health")
+def health_check() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+========== repository.py ==========
+
+
+from datetime import datetime, timezone,date
+from app.database import database_connection
+from app.schemas import TaskCreate
+
+
+def utc_now() -> str:
+    """Return the current UTC timestamp in ISO 8601 format."""
+    return datetime.now(timezone.utc).isoformat()
+
+def create_task(task: TaskCreate) -> dict:
+    """Insert a task into SQLite and return the created row."""
+    now = utc_now()
+
+    with database_connection() as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO tasks (
+                title,
+                description,
+                status,
+                priority,
+                due_date,
+                created_at,
+                updated_at,
+                completed_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task.title,
+                task.description,
+                task.status.value,
+                task.priority.value,
+                task.due_date.isoformat() if task.due_date else None,
+                now,
+                now,
+                now if task.status.value == "done" else None,
+            ),
+        )
+
+        row = connection.execute(
+            "SELECT * FROM tasks WHERE id = ?",
+            (cursor.lastrowid,),
+        ).fetchone()
+
+        return dict(row)
+
+
+def get_task_by_id(task_id: int) -> dict | None:
+    """Return a task by ID, or None if it does not exist."""
+    with database_connection() as connection:
+        row = connection.execute(
+            "SELECT * FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+
+        return dict(row) if row is not None else None
+
+def list_tasks(
+    limit: int = 20,
+    offset: int = 0,
+    status: str | None = None,
+    priority: str | None = None,
+    q: str | None = None,
+    due_before: date | None = None,
+    overdue: bool = False,
+    sort_by: str = "created_at",
+    order: str = "desc",
+) -> tuple[list[dict], int]:
+    """Return filtered tasks and the total matching count."""
+
+    allowed_sort_columns = {
+        "id": "id",
+        "title": "title",
+        "status": "status",
+        "priority": "priority",
+        "due_date": "due_date",
+        "created_at": "created_at",
+        "updated_at": "updated_at",
+    }
+
+    if sort_by not in allowed_sort_columns:
+        raise ValueError("Invalid sort_by value")
+
+    if order.lower() not in {"asc", "desc"}:
+        raise ValueError("Invalid order value")
+
+    conditions = []
+    params = []
+
+    if status is not None:
+        conditions.append("status = ?")
+        params.append(status)
+
+    if priority is not None:
+        conditions.append("priority = ?")
+        params.append(priority)
+
+    if q:
+        conditions.append("(title LIKE ? OR description LIKE ?)")
+        search = f"%{q}%"
+        params.extend([search, search])
+
+    if due_before is not None:
+        conditions.append("due_date <= ?")
+        params.append(due_before.isoformat())
+
+    if overdue:
+        conditions.append(
+            "due_date < ? AND status != 'done'"
+        )
+        params.append(date.today().isoformat())
+
+    where_clause = ""
+    if conditions:
+        where_clause = "WHERE " + " AND ".join(conditions)
+
+    sort_column = allowed_sort_columns[sort_by]
+    sort_order = order.upper()
+
+    with database_connection() as connection:
+        total = connection.execute(
+            f"SELECT COUNT(*) FROM tasks {where_clause}",
+            params,
+        ).fetchone()[0]
+
+        rows = connection.execute(
+            f"""
+            SELECT *
+            FROM tasks
+            {where_clause}
+            ORDER BY {sort_column} {sort_order}
+            LIMIT ? OFFSET ?
+            """,
+            (*params, limit, offset),
+        ).fetchall()
+
+        return [dict(row) for row in rows], total
+
+
+def update_task(task_id: int, updates: dict) -> dict | None:
+    """Update supplied task fields and return the updated task."""
+    if not updates:
+        updates = updates.copy()
+        return get_task_by_id(task_id)
+
+    allowed_fields = {
+        "title",
+        "description",
+        "status",
+        "priority",
+        "due_date",
+        "updated_at",
+        "completed_at",
+    }
+
+    if not set(updates).issubset(allowed_fields):
+        raise ValueError("Invalid update field")
+
+    if "due_date" in updates and isinstance(updates["due_date"], date):
+        updates["due_date"] = updates["due_date"].isoformat()
+
+    for field in ("status", "priority"):
+        value = updates.get(field)
+        if hasattr(value, "value"):
+            updates[field] = value.value
+
+    fields = list(updates)
+    assignments = ", ".join(f"{field} = ?" for field in fields)
+    values = [updates[field] for field in fields]
+
+    with database_connection() as connection:
+        cursor = connection.execute(
+            f"UPDATE tasks SET {assignments} WHERE id = ?",
+            (*values, task_id),
+        )
+
+        if cursor.rowcount == 0:
+            return None
+
+        row = connection.execute(
+            "SELECT * FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+
+        return dict(row) if row is not None else None
+
+
+def delete_task(task_id: int) -> bool:
+    """Delete a task; return True if a task was deleted."""
+    with database_connection() as connection:
+        cursor = connection.execute(
+            "DELETE FROM tasks WHERE id = ?",
+            (task_id,),
+        )
+        return cursor.rowcount > 0
+
+
+
+def get_task_stats() -> dict[str, int]:
+    """Return task counts by status and the number of overdue tasks."""
+    today = date.today().isoformat()
+
+    with database_connection() as connection:
+        row = connection.execute(
+            """SELECT
+                COUNT(*) AS total,
+                COALESCE(
+                    SUM(CASE WHEN status = 'todo' THEN 1 ELSE 0 END), 0
+                ) AS todo,
+                COALESCE(
+                    SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END), 0
+                ) AS in_progress,
+                COALESCE(
+                    SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END), 0
+                ) AS done,
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN due_date < ? AND status != 'done'
+                            THEN 1
+                            ELSE 0
+                        END
+                    ), 0
+                ) AS overdue
+                FROM tasks""",
+            (today,),
+        ).fetchone()
+
+        return {
+            "total": row["total"],
+            "todo": row["todo"],
+            "in_progress": row["in_progress"],
+            "done": row["done"],
+            "overdue": row["overdue"],
+        }
+
+
+========== routers/__init__.py ==========
+
+
+
+========== routers/tasks.py ==========
+
+from datetime import date
+
+from fastapi import APIRouter, HTTPException, Query, status
+from app.schemas import (
+    TaskCreate,
+    TaskListResponse,
+    TaskPriority,
+    TaskResponse,
+    TaskStatsResponse,
+    TaskStatus,
+    TaskUpdate,
+)
+from app import service
+import logging
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/tasks", tags=["Tasks"])
+
+
+# @router.post("", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
+# def create_task(task: TaskCreate):
+#     return service.create_task(task)
+@router.post("", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
+def create_task(task: TaskCreate):
+    created_task = service.create_task(task)
+
+    logger.info(
+        "Task created successfully: task_id=%s",
+        created_task["id"],
+    )
+
+    return created_task
+
+@router.get("/stats", response_model=TaskStatsResponse)
+def get_task_stats():
+    return service.get_task_stats()
+
+
+@router.get("", response_model=TaskListResponse)
+def list_tasks(
+    status_filter: TaskStatus | None = Query(default=None, alias="status"),
+    priority: TaskPriority | None = None,
+    q: str | None = None,
+    due_before: date | None = None,
+    overdue: bool = False,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    sort_by: str = "created_at",
+    order: str = "desc",
+    
+):
+    try:
+        items, total = service.list_tasks(
+            limit=limit,
+            offset=offset,
+            status=status_filter.value if status_filter else None,
+            priority=priority.value if priority else None,
+            q=q,
+            due_before=due_before,
+            overdue=overdue,
+            sort_by=sort_by,
+            order=order,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get("/{task_id}", response_model=TaskResponse)
+def get_task(task_id: int):
+    return service.get_task(task_id)
+
+
+@router.put("/{task_id}", response_model=TaskResponse)
+def replace_task(task_id: int, task: TaskCreate):
+    service.get_task(task_id)
+    return service.update_task(
+        task_id,
+        TaskUpdate(**task.model_dump()),
+    )
+
+
+@router.patch("/{task_id}", response_model=TaskResponse)
+def patch_task(task_id: int, updates: TaskUpdate):
+    return service.update_task(task_id, updates)
+
+
+@router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_task(task_id: int):
+    service.delete_task(task_id)
+
+========== schemas.py ==========
+
+
+from datetime import date, datetime
+from enum import Enum
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class TaskStatus(str, Enum):
+    TODO = "todo"
+    IN_PROGRESS = "in_progress"
+    DONE = "done"
+
+
+class TaskPriority(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class TaskCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=1000)
+    status: TaskStatus = TaskStatus.TODO
+    priority: TaskPriority = TaskPriority.MEDIUM
+    due_date: date | None = None
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Title must not be empty or whitespace")
+        return value
+
+
+class TaskUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str | None = Field(default=None, min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=1000)
+    status: TaskStatus | None = None
+    priority: TaskPriority | None = None
+    due_date: date | None = None
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError("Title must not be empty or whitespace")
+        return value
+
+
+class TaskResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    description: str | None
+    status: TaskStatus
+    priority: TaskPriority
+    due_date: date | None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None
+
+
+class TaskListResponse(BaseModel):
+    items: list[TaskResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class TaskStatsResponse(BaseModel):
+    total: int
+    todo: int
+    in_progress: int
+    done: int
+    overdue: int
+
+
+========== service.py ==========
+
+
+from datetime import date, datetime, timezone
+
+from app import repository
+from app.exceptions import InvalidTaskError, TaskNotFoundError
+from app.schemas import TaskCreate, TaskUpdate
+
+
+def utc_now() -> str:
+    """Return the current UTC timestamp."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+
+def create_task(task: TaskCreate) -> dict:
+    """Validate creation rules and create a task."""
+    if task.due_date is not None and task.due_date < date.today():
+        raise InvalidTaskError("Due date cannot be in the past")
+
+    return repository.create_task(task)
+
+
+
+def get_task(task_id: int) -> dict:
+    """Return a task or raise an error if it does not exist."""
+    task = repository.get_task_by_id(task_id)
+
+    if task is None:
+        raise TaskNotFoundError(f"Task {task_id} not found")
+
+    return task
+
+
+def update_task(task_id: int, updates: TaskUpdate) -> dict:
+    """Apply business rules before updating a task."""
+    existing = get_task(task_id)
+    changes = updates.model_dump(exclude_unset=True)
+
+    if not changes:
+        raise InvalidTaskError("At least one field must be provided")
+
+    if "title" in changes and changes["title"] is None:
+        raise InvalidTaskError("Title cannot be null")
+
+    if "status" in changes and changes["status"] is None:
+        raise InvalidTaskError("Status cannot be null")
+
+    if "priority" in changes and changes["priority"] is None:
+        raise InvalidTaskError("Priority cannot be null")
+
+    now = utc_now()
+    changes["updated_at"] = now
+
+    new_status = changes.get("status", existing["status"])
+    if hasattr(new_status, "value"):
+        new_status = new_status.value
+
+    if new_status == "done":
+        if existing["status"] != "done":
+            changes["completed_at"] = now
+    else:
+        changes["completed_at"] = None
+
+    updated = repository.update_task(task_id, changes)
+
+    if updated is None:
+        raise TaskNotFoundError(f"Task {task_id} not found")
+
+    return updated
+
+
+def delete_task(task_id: int) -> None:
+    """Delete a task or raise an error if it does not exist."""
+    if not repository.delete_task(task_id):
+        raise TaskNotFoundError(f"Task {task_id} not found")
+
+
+def list_tasks(**filters) -> tuple[list[dict], int]:
+    """Delegate filtered listing to the repository."""
+    return repository.list_tasks(**filters)
+
+
+def get_task_stats() -> dict[str, int]:
+    """Return aggregate task statistics."""
+    return repository.get_task_stats()

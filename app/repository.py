@@ -1,13 +1,8 @@
+from datetime import date
 
-from datetime import datetime, timezone,date
 from app.database import database_connection
 from app.schemas import TaskCreate
-
-
-def utc_now() -> str:
-    """Return the current UTC timestamp in ISO 8601 format."""
-    return datetime.now(timezone.utc).isoformat()
-
+from app.utils import utc_now
 def create_task(task: TaskCreate) -> dict:
     """Insert a task into SQLite and return the created row."""
     now = utc_now()
@@ -74,7 +69,7 @@ def list_tasks(
         "id": "id",
         "title": "title",
         "status": "status",
-        "priority": "priority",
+        "priority": "CASE priority WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END",
         "due_date": "due_date",
         "created_at": "created_at",
         "updated_at": "updated_at",
@@ -130,7 +125,7 @@ def list_tasks(
             SELECT *
             FROM tasks
             {where_clause}
-            ORDER BY {sort_column} {sort_order}
+            ORDER BY {sort_column} {sort_order}, id {sort_order}
             LIMIT ? OFFSET ?
             """,
             (*params, limit, offset),
@@ -142,7 +137,7 @@ def list_tasks(
 def update_task(task_id: int, updates: dict) -> dict | None:
     """Update supplied task fields and return the updated task."""
     if not updates:
-        updates = updates.copy()
+ 
         return get_task_by_id(task_id)
 
     allowed_fields = {

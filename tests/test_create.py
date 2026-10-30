@@ -29,14 +29,19 @@ def test_create_task_trims_title(client):
     assert response.status_code == 201
     assert response.json()["title"] == "Learn FastAPI"
 
+import pytest
 
-def test_create_task_rejects_empty_title(client):
-    response = client.post(
-        "/tasks",
-        json={"title": "   "},
-    )
-
-    assert response.status_code == 422
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"title": "   "},
+        {"title": ""},
+        {"title": "x" * 101},
+        {"title": "ok", "description": "x" * 1001},
+    ],
+)
+def test_create_task_rejects_invalid_payload(client, payload):
+    assert client.post("/tasks", json=payload).status_code == 422
 
 
 def test_create_task_rejects_invalid_priority(client):
@@ -72,15 +77,6 @@ def test_create_task_rejects_missing_title(client):
     assert response.status_code == 422
 
 
-def test_create_task_rejects_whitespace_only_title(client):
-    response = client.post(
-        "/tasks",
-        json={"title": "   "},
-    )
-
-    assert response.status_code == 422
-
-
 def test_create_task_rejects_invalid_due_date(client):
     response = client.post(
         "/tasks",
@@ -90,4 +86,12 @@ def test_create_task_rejects_invalid_due_date(client):
         },
     )
 
+    assert response.status_code == 422
+
+
+from datetime import date, timedelta
+
+def test_create_task_rejects_past_due_date(client):
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    response = client.post("/tasks", json={"title": "Late", "due_date": yesterday})
     assert response.status_code == 422

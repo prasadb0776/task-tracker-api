@@ -1,14 +1,10 @@
 
-from datetime import date, datetime, timezone
+from datetime import date
 
 from app import repository
 from app.exceptions import InvalidTaskError, TaskNotFoundError
 from app.schemas import TaskCreate, TaskUpdate
-
-
-def utc_now() -> str:
-    """Return the current UTC timestamp."""
-    return datetime.now(timezone.utc).isoformat()
+from app.utils import utc_now
 
 
 

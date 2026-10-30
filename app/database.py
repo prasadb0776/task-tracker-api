@@ -22,13 +22,6 @@ def get_connection(db_path=None) -> sqlite3.Connection:
     return connection
 
 
-# def get_connection(db_path=None) -> sqlite3.Connection:
-#     path = db_path if db_path is not None else DATABASE_PATH
-
-#     connection = sqlite3.connect(path)
-#     connection.row_factory = sqlite3.Row
-#     connection.execute("PRAGMA foreign_keys = ON")
-#     return connection
 
 @contextmanager
 def database_connection(db_path=None) -> Iterator[sqlite3.Connection]:
