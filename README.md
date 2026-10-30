@@ -3,6 +3,8 @@
 
 A REST API for creating, managing, filtering, and tracking tasks, built with FastAPI, Pydantic, and SQLite.
 
+
+
 ## Features
 
 - Create, retrieve, update, and delete tasks
@@ -42,6 +44,11 @@ python -m pip install -r requirements.txt
 ```bash
 uvicorn app.main:app --reload
 ```
+
+
+![Task Tracker UI](docs/screenshot.png)
+
+Open http://127.0.0.1:8000/ for the web UI, or http://127.0.0.1:8000/docs for the interactive API docs.
 
 Interactive API documentation:
 
